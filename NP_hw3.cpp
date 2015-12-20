@@ -5,14 +5,11 @@ using namespace std;
 #include "resource.h"
 
 #define SERVER_PORT 7799
-#define BUF_SIZE 6000
 
 #define WM_SOCKET_NOTIFY (WM_USER + 1)
 
 BOOL CALLBACK MainDlgProc(HWND, UINT, WPARAM, LPARAM);
 int EditPrintf (HWND, TCHAR *, ...);
-void parse_query_string(char *querystring);
-
 //=================================================================
 //	Global Variables
 //=================================================================
@@ -25,8 +22,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	return DialogBox(hInstance, MAKEINTRESOURCE(ID_MAIN), NULL, MainDlgProc);
 }
 
-char filename[100];
-char header[] = "HTTP/1.1 200 OK\nContent-Type: text/html\n\n";
 BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 {
 	WSADATA wsaData;
@@ -113,70 +108,14 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					EditPrintf(hwndEdit, TEXT("=== Accept one new client(%d), List size:%d ===\r\n"), ssock, Socks.size());
 					break;
 				case FD_READ:
-					OutputDebugString("FD_READ\n");
-
-					//Write your code for read event here.
-					char buf[BUF_SIZE];
-					int result;
-					result = recv(ssock, buf, BUF_SIZE, 0);
-					buf[result] = 0;
-
-					if (result <= 0)
-						break;
-
-					char *url;
-					char *method;
-					method = strtok(buf, " ");
-					if (strcmp(method, "GET") != 0)
-						break;
-					url = strtok(NULL, " ");
-					EditPrintf(hwndEdit, TEXT("url: %s\r\n"), url);
+				//Write your code for read event here.
 					
-					//GET /test?qq=123 HTTP/1.1
-
-					char *route;
-					route = strtok(url, "?");
-					strcpy(filename, route + 1);
-
-					char *querystring;
-					querystring = strtok(NULL, "");
-					EditPrintf(hwndEdit, TEXT("querystring: %s\r\n"), querystring);
-					
-					parse_query_string(querystring);
-
 					break;
 				case FD_WRITE:
-					//Write your code for write event here
-					OutputDebugString("FD_WRITE\n");
-					send(ssock, header, sizeof(header) - 1, 0);
-					FILE *pFile;
-					long lSize;
-					char *buffer;
-					size_t file_result;
-					OutputDebugString("filename:\n");
-					OutputDebugString(filename);
-					pFile = fopen(filename, "rb");
-					if (pFile == NULL) { OutputDebugString("fopen error\n"); exit(1); }
+				//Write your code for write event here
 
-					// obtain file size:
-					fseek(pFile, 0, SEEK_END);
-					lSize = ftell(pFile);
-					rewind(pFile);
-					buffer = (char*)malloc(sizeof(char)*lSize);
-					if (buffer == NULL) { OutputDebugString("malloc error\n"); exit(2); }
-
-					file_result = fread(buffer, 1, lSize, pFile);
-					if (file_result != lSize) { OutputDebugString("fread error\n"); exit(3); }
-
-					send(ssock, buffer, file_result, 0);
-
-					fclose(pFile);
-					free(buffer);
-
-					closesocket(ssock);
 					break;
 				case FD_CLOSE:
-
 					break;
 			};
 			break;
@@ -203,28 +142,4 @@ int EditPrintf (HWND hwndEdit, TCHAR * szFormat, ...)
      SendMessage (hwndEdit, EM_REPLACESEL, FALSE, (LPARAM) szBuffer) ;
      SendMessage (hwndEdit, EM_SCROLLCARET, 0, 0) ;
 	 return SendMessage(hwndEdit, EM_GETLINECOUNT, 0, 0); 
-}
-
-typedef struct {
-	char*  ip;
-	int    port;
-	FILE*  batchfile;
-	SOCKET sock;
-} server;
-
-void parse_query_string(char *querystring) {
-	char* item = strtok(querystring, "&");
-
-	if (item == NULL)
-		return;
-
-	while (item != NULL) {
-		char* ptr;
-		char *key = strtok_s(item, "=", &ptr);
-		char *val = strtok_s(NULL, "", &ptr);
-		char debug[100];
-		sprintf(debug, "%s=%s\n", key, val);
-		OutputDebugString(debug);
-		item = strtok(NULL, "&");
-	}
 }
