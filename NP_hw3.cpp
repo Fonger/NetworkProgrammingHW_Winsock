@@ -240,6 +240,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					if (strncmp(route, "hw3.cgi\0", 8) == 0) {
 						nclients = 0;
 						clients = parse_query_string(querystring);
+						httpsock = httpclient->ssock;
 						print_html_frame(clients);
 						for (int i = 0; i < MAX_CLIENT; i++) {
 							if (clients[i] == NULL)
@@ -342,6 +343,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					if (client->status != FD_READ)
 						break;
 
+
 					char rasbuf[BUF_SIZE];
 
 					rResult = recv(client->sockfd, rasbuf, BUF_SIZE, 0);
@@ -353,8 +355,9 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 						break;
 					}
 					rasbuf[rResult] = '\0';
-					OutputDebugString(rasbuf);
 
+					printc(client, rasbuf, FALSE);
+					
 					for(int j = 0; j < rResult - 1; j++) { //possible problem
                         if (client->dying) {
 							if (client->status != F_DONE) {
@@ -367,7 +370,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
                             break;
                         }
                     }
-					// break; fall through
+					//break; fall through
 				case FD_WRITE:
 					client = get_client(wParam);
 					if (client == NULL)
@@ -386,6 +389,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 						if (send(client->sockfd, cmd, strlen(cmd), 0) < 0) {
 							if (WSAGetLastError() == WSAEWOULDBLOCK) {
 								client->lastcmd = cmd;
+								OutputDebugString("Wooooo~block");
 								break;
 							}
 							else
