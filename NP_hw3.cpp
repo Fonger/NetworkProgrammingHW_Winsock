@@ -1,23 +1,46 @@
 #include <windows.h>
 #include <list>
+#include <string.h>
+
 using namespace std;
 
 #include "resource.h"
 
 #define SERVER_PORT 7890
 #define BUF_SIZE 10000
-#define WM_SOCKET_NOTIFY (WM_USER + 1)
-
-#define HTTP_CONNECT 0
+#define MAX_CLIENT 5
+#define WM_SOCKET_HTTP (WM_USER + 1)
+#define WM_SOCKET_RAS (WM_USER + 2)
+#define HTTP_ACCEPT 0
 #define HTTP_READ 1
 #define HTTP_WRITE 2
 #define HTTP_DONE 3
 
+#define F_CONNECTING 0
+#define F_READING 1
+#define F_WRITING 2
+#define F_DONE 3
+
+
 typedef struct {
-	SOCKET ssock;
-	char buffer[BUF_SIZE];
-	int status;
+    int     index;
+    char*   host;
+    UINT16  port;
+    FILE*   batch;
+    int     sockfd;
+    int     status;
+    int     dying;
+    char*   lastcmd;
+} Client;
+
+typedef struct {
+	SOCKET  ssock;
+	char    buffer[BUF_SIZE];
+	int     status;
+	Client* *clients;
+	int     nclients;
 } HTTPClient;
+
 
 BOOL CALLBACK MainDlgProc(HWND, UINT, WPARAM, LPARAM);
 int EditPrintf (HWND, TCHAR *, ...);
@@ -26,14 +49,13 @@ void bad_request(HTTPClient *client, char *msg);
 void home_page(HTTPClient *client);
 void not_found(HTTPClient *client);
 void serve_file(HTTPClient *client, char *filename, char *content_type);
+Client** parse_query_string(char *querystring);
 
 //=================================================================
 //	Global Variables
 //=================================================================
-
-
-
 list<HTTPClient*> httpclients;
+Client* *clients;
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	LPSTR lpCmdLine, int nCmdShow)
@@ -47,7 +69,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 	WSADATA wsaData;
 
 	static HWND hwndEdit;
-	static SOCKET msock, ssock;
+	static SOCKET msock, ssock, rsock;
 	static struct sockaddr_in sa;
 	static HTTPClient *client;
 
@@ -75,7 +97,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 						return TRUE;
 					}
 
-					err = WSAAsyncSelect(msock, hwnd, WM_SOCKET_NOTIFY, FD_ACCEPT | FD_CLOSE);
+					err = WSAAsyncSelect(msock, hwnd, WM_SOCKET_HTTP, FD_ACCEPT | FD_CLOSE);
 
 					if ( err == SOCKET_ERROR ) {
 						EditPrintf(hwndEdit, TEXT("=== Error: select error ===\r\n"));
@@ -121,12 +143,12 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 			EndDialog(hwnd, 0);
 			break;
 
-		case WM_SOCKET_NOTIFY:
+		case WM_SOCKET_HTTP:
 			switch( WSAGETSELECTEVENT(lParam) )
 			{
 				case FD_ACCEPT:
 					ssock = accept(msock, NULL, NULL);
-					err = WSAAsyncSelect(ssock, hwnd, WM_SOCKET_NOTIFY, FD_READ | FD_WRITE | FD_CLOSE);
+					err = WSAAsyncSelect(ssock, hwnd, WM_SOCKET_HTTP, FD_READ | FD_WRITE | FD_CLOSE);
 
 					if ( err == SOCKET_ERROR ) {
 						EditPrintf(hwndEdit, TEXT("=== Error: select error ===\r\n"));
@@ -139,7 +161,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					client = (HTTPClient*)malloc(sizeof(HTTPClient));
 					memset(client, 0, sizeof(HTTPClient));
 					client->ssock = ssock;
-					client->status = HTTP_CONNECT;
+					client->status = HTTP_ACCEPT;
 					httpclients.push_back(client);
 
 					EditPrintf(hwndEdit, TEXT("=== Accept one new client(%d), List size:%d ===\r\n"), ssock, httpclients.size());
@@ -151,7 +173,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					client = get_client(wParam);
 					if (client == NULL)
 						break;
-					if (client->status != HTTP_CONNECT)
+					if (client->status != HTTP_ACCEPT)
 						break;
 
 					rResult = recv(client->ssock, client->buffer, BUF_SIZE, 0);
@@ -209,6 +231,53 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					char *querystring;
 					querystring = strtok(NULL, "");
 
+					if (strncmp(route, "hw3.cgi\0", 8) == 0) {
+						client->clients = parse_query_string(querystring);
+						client->nclients = 0;
+						for (int i = 0; i < MAX_CLIENT; i++) {
+							if (client->clients[i] == NULL)
+								continue;
+
+							//create ras client socket
+							rsock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+							if( rsock == INVALID_SOCKET ) {
+								EditPrintf(hwndEdit, TEXT("=== Error: create socket in ras error ===\r\n"));
+								WSACleanup();
+								return TRUE;
+							}
+
+							err = WSAAsyncSelect(rsock, hwnd, WM_SOCKET_RAS, FD_CONNECT | FD_WRITE | FD_READ | FD_CLOSE);
+
+							if ( err == SOCKET_ERROR ) {
+								EditPrintf(hwndEdit, TEXT("=== Error: select error in ras ===\r\n"));
+								closesocket(rsock);
+
+								WSACleanup();
+								return TRUE;
+							}
+
+							struct hostent *he = gethostbyname(client->clients[i]->host);
+
+							//fill the address info about server
+							sa.sin_family		= AF_INET;
+							sa.sin_port			= htons(client->clients[i]->port);
+							sa.sin_addr	        = *((struct in_addr *)he->h_addr);
+
+							err = connect(rsock, (LPSOCKADDR)&sa, sizeof(struct sockaddr));
+							if( err == SOCKET_ERROR ) {
+								EditPrintf(hwndEdit, TEXT("=== Error: connect error in ras ===\r\n"));
+								WSACleanup();
+								return FALSE;
+							}
+
+							client->clients[i]->sockfd = rsock;
+							client->clients[i]->status = F_CONNECTING;
+							client->nclients++;
+						}
+						break;
+					}
+
 					char *ext;
 					ext = strrchr(route, '.');
             
@@ -246,11 +315,19 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					break;
 			};
 			break;
-		
+		case WM_SOCKET_RAS:
+			switch( WSAGETSELECTEVENT(lParam) )
+			{
+				case FD_ACCEPT:
+					break;
+				case FD_READ:
+					break;
+				case FD_WRITE:
+					break;
+			}
+			break;
 		default:
 			return FALSE;
-
-
 	};
 
 	return TRUE;
@@ -320,4 +397,56 @@ void serve_file(HTTPClient *client, char *filename, char *content_type) {
     fclose(file);
 	client->status = HTTP_DONE;
 	closesocket(client->ssock);
+}
+
+
+Client** parse_query_string(char *querystring) {
+    char* item = strtok(querystring, "&");
+    
+    Client* *clients = (Client**)malloc(sizeof(void*) * MAX_CLIENT);
+    memset(clients, 0, sizeof(void*) * MAX_CLIENT);
+
+	if (item == NULL)
+        return NULL;
+    
+    while (item != NULL) {
+        char* ptr;
+        char *key = strtok_s(item, "=", &ptr);
+
+        if (key == NULL || strlen(key) != 2)
+            break;
+        
+        char *val = strtok_s(NULL, "", &ptr);
+        
+        if (val == NULL)
+            break;
+        
+        int clientid = atoi(key + 1);
+        
+        if (clientid == 0 || clientid > 5)
+            break;
+        
+        int i = clientid - 1;
+        if (clients[i] == NULL) {
+            clients[i] = (Client*)malloc(sizeof(Client));
+            memset(clients[i], 0, sizeof(Client));
+            clients[i]->index = i;
+            clients[i]->dying = FALSE;
+        }
+        switch (*key) {
+            case 'h':
+                clients[i]->host = strdup(val);
+                break;
+            case 'p':
+                clients[i]->port = atoi(val);
+                break;
+            case 'f':
+                clients[i]->batch = fopen(val, "r");
+                break;
+            default:
+                break;
+        }
+        item = strtok(NULL, "&");
+    }
+    return clients;
 }

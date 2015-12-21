@@ -5,3 +5,5 @@ Debug/
 *.tlog
 *.pdb
 *.obj
+*.tmp
+*.sdf
