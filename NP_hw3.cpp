@@ -31,6 +31,7 @@ typedef struct {
     int     status;
     int     dying;
     char*   lastcmd;
+	SOCKET  httpsock;
 } Client;
 
 typedef struct {
@@ -265,7 +266,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 							sa.sin_addr	        = *((struct in_addr *)he->h_addr);
 
 							err = connect(rsock, (LPSOCKADDR)&sa, sizeof(struct sockaddr));
-							if( err == SOCKET_ERROR ) {
+							if( err == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK) {
 								EditPrintf(hwndEdit, TEXT("=== Error: connect error in ras ===\r\n"));
 								WSACleanup();
 								return FALSE;
@@ -273,6 +274,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 
 							client->clients[i]->sockfd = rsock;
 							client->clients[i]->status = F_CONNECTING;
+							client->clients[i]->httpsock = client->ssock;
 							client->nclients++;
 						}
 						break;
@@ -318,9 +320,10 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 		case WM_SOCKET_RAS:
 			switch( WSAGETSELECTEVENT(lParam) )
 			{
-				case FD_ACCEPT:
+				case FD_CONNECT:
 					break;
 				case FD_READ:
+					
 					break;
 				case FD_WRITE:
 					break;
@@ -382,14 +385,16 @@ void not_found(HTTPClient *client) {
 
 void serve_file(HTTPClient *client, char *filename, char *content_type) {
     FILE *file = fopen(filename, "r");
-    if (file == NULL)
+    if (file == NULL) {
 		not_found(client);
+		return;
+	}
 
 	char buf[BUF_SIZE];
 	memset(buf, 0, BUF_SIZE);
 	int n = sprintf(buf, "HTTP/1.1 200 OK\nContent-Type: %s\n\n", content_type);
 	send(client->ssock, buf, n, 0);
-
+	rewind(file);
 	do {
 		n = fread(buf, 1, BUF_SIZE, file);
 		send(client->ssock, buf, n, 0);
