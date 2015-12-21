@@ -372,6 +372,7 @@ BOOL CALLBACK MainDlgProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
                     }
 					//break; fall through
 				case FD_WRITE:
+					Sleep(500);
 					client = get_client(wParam);
 					if (client == NULL)
 						break;
