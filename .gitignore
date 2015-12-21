@@ -1,0 +1,7 @@
+*.opensdf;
+Release/
+Debug/
+*.log
+*.tlog
+*.pdb
+*.obj
